@@ -44,7 +44,6 @@ public static partial class McpServerBuilderExtensions
         {
             if (toolMethod.GetCustomAttribute<McpServerToolAttribute>() is not null)
             {
-
                 if (builder is KeyedMcpServerBuilder keyedBuilder)
                 {
                     // Register as keyed singleton for this specific server
@@ -161,8 +160,8 @@ public static partial class McpServerBuilderExtensions
                     if (toolMethod.GetCustomAttribute<McpServerToolAttribute>() is not null)
                     {
                         builder.Services.AddSingleton((Func<IServiceProvider, McpServerTool>)(toolMethod.IsStatic ?
-                            services => McpServerTool.Create(toolMethod, options: new() { Services = services , SerializerOptions = serializerOptions }) :
-                            services => McpServerTool.Create(toolMethod, r => CreateTarget(r.Services, toolType), new() { Services = services , SerializerOptions = serializerOptions })));
+                            services => McpServerTool.Create(toolMethod, options: new() { Services = services, SerializerOptions = serializerOptions }) :
+                            services => McpServerTool.Create(toolMethod, r => CreateTarget(r.Services, toolType), new() { Services = services, SerializerOptions = serializerOptions })));
                     }
                 }
             }
