@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Server;
 
@@ -64,32 +65,37 @@ public static class HttpMcpServerBuilderExtensions
         // Ensure options services are registered for keyed scenarios
         builder.Services.AddOptions();
 
-        // Register keyed options configuration using our wrapper
-        builder.Services.TryAddKeyedSingleton<IOptions<McpServerOptions>>(serverKey, (sp, key) =>
+        // Register keyed options configuration using standard .NET options pattern
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureNamedOptions<McpServerOptions>>(sp =>
+            new KeyedMcpServerOptionsSetup(sp, serverKey, sp.GetRequiredService<IOptions<McpServerHandlers>>())));
+
+        // Register authorization filter setup for all options (it will apply to named options too)
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<McpServerOptions>>(sp =>
+            new AuthorizationFilterSetup(sp.GetService<IAuthorizationPolicyProvider>())));
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<McpServerOptions>>(sp =>
+            new AuthorizationFilterSetup(sp.GetService<IAuthorizationPolicyProvider>())));
+
+        // Register keyed options monitor access
+        builder.Services.TryAddKeyedSingleton(serverKey, (sp, key) =>
         {
             var optionsMonitor = sp.GetRequiredService<IOptionsMonitor<McpServerOptions>>();
-            return new KeyedOptionsWrapper<McpServerOptions>(optionsMonitor, (string)key, sp);
+            return Options.Options.Create(optionsMonitor.Get((string)key!));
         });
 
-        builder.Services.TryAddKeyedSingleton<IOptionsFactory<McpServerOptions>>(serverKey, (sp, key) =>
-        {
-            var optionsMonitor = sp.GetRequiredService<IOptionsMonitor<McpServerOptions>>();
-            return new KeyedOptionsWrapper<McpServerOptions>(optionsMonitor, (string)key, sp);
-        });
-
-        builder.Services.TryAddKeyedSingleton<IOptions<HttpServerTransportOptions>>(serverKey, (sp, key) =>
+        // For HttpServerTransportOptions, we can use standard named options
+        builder.Services.TryAddKeyedSingleton(serverKey, (sp, key) =>
         {
             var optionsMonitor = sp.GetRequiredService<IOptionsMonitor<HttpServerTransportOptions>>();
-            return new KeyedOptionsWrapper<HttpServerTransportOptions>(optionsMonitor, (string)key, sp);
+            return Options.Options.Create(optionsMonitor.Get((string)key!));
         });
 
         // Register keyed services for this specific server instance
-        builder.Services.TryAddKeyedSingleton<StatefulSessionManager>(serverKey, (sp, key) => 
+        builder.Services.TryAddKeyedSingleton(serverKey, (sp, key) => 
             new StatefulSessionManager(
                 sp.GetRequiredKeyedService<IOptions<HttpServerTransportOptions>>(key),
                 sp.GetRequiredService<ILogger<StatefulSessionManager>>()));
 
-        builder.Services.TryAddKeyedSingleton<StreamableHttpHandler>(serverKey, (sp, key) =>
+        builder.Services.TryAddKeyedSingleton(serverKey, (sp, key) =>
             new StreamableHttpHandler(
                 sp.GetRequiredKeyedService<IOptions<McpServerOptions>>(key),
                 sp.GetRequiredKeyedService<IOptionsFactory<McpServerOptions>>(key),
@@ -99,7 +105,7 @@ public static class HttpMcpServerBuilderExtensions
                 sp.GetRequiredService<ILoggerFactory>(),
                 sp));
 
-        builder.Services.TryAddKeyedSingleton<SseHandler>(serverKey, (sp, key) =>
+        builder.Services.TryAddKeyedSingleton(serverKey, (sp, key) =>
             new SseHandler(
                 sp.GetRequiredKeyedService<IOptions<McpServerOptions>>(key),
                 sp.GetRequiredKeyedService<IOptionsFactory<McpServerOptions>>(key),
@@ -108,7 +114,7 @@ public static class HttpMcpServerBuilderExtensions
                 sp.GetRequiredService<ILoggerFactory>()));
 
         // Register a keyed background service for this server instance
-        builder.Services.TryAddKeyedSingleton<IdleTrackingBackgroundService>(serverKey, (sp, key) =>
+        builder.Services.TryAddKeyedSingleton(serverKey, (sp, key) =>
             new IdleTrackingBackgroundService(
                 sp.GetRequiredKeyedService<StatefulSessionManager>(key),
                 sp.GetRequiredKeyedService<IOptions<HttpServerTransportOptions>>(key),
@@ -121,12 +127,9 @@ public static class HttpMcpServerBuilderExtensions
         // Add data protection (shared across all instances)
         builder.Services.AddDataProtection();
 
-        // Configure keyed options for this server instance
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Transient<IPostConfigureOptions<McpServerOptions>, AuthorizationFilterSetup>());
-        
         if (configureOptions is not null)
         {
-            builder.Services.Configure<HttpServerTransportOptions>(serverKey, configureOptions);
+            builder.Services.Configure(serverKey, configureOptions);
         }
 
         return builder;
