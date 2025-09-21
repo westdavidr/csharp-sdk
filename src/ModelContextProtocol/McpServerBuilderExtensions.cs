@@ -44,9 +44,21 @@ public static partial class McpServerBuilderExtensions
         {
             if (toolMethod.GetCustomAttribute<McpServerToolAttribute>() is not null)
             {
-                builder.Services.AddSingleton((Func<IServiceProvider, McpServerTool>)(toolMethod.IsStatic ?
-                    services => McpServerTool.Create(toolMethod, options: new() { Services = services, SerializerOptions = serializerOptions }) :
-                    services => McpServerTool.Create(toolMethod, static r => CreateTarget(r.Services, typeof(TToolType)), new() { Services = services, SerializerOptions = serializerOptions })));
+
+                if (builder is KeyedMcpServerBuilder keyedBuilder)
+                {
+                    // Register as keyed singleton for this specific server
+                    builder.Services.AddKeyedSingleton(keyedBuilder.ServerKey, (services, key) =>
+                        toolMethod.IsStatic ?
+                            McpServerTool.Create(toolMethod, options: new() { Services = services, SerializerOptions = serializerOptions }) :
+                            McpServerTool.Create(toolMethod, static r => CreateTarget(r.Services, typeof(TToolType)), new() { Services = services, SerializerOptions = serializerOptions }));
+                }
+                else
+                {
+                    builder.Services.AddSingleton((Func<IServiceProvider, McpServerTool>)(toolMethod.IsStatic ?
+                        services => McpServerTool.Create(toolMethod, options: new() { Services = services, SerializerOptions = serializerOptions }) :
+                        services => McpServerTool.Create(toolMethod, static r => CreateTarget(r.Services, typeof(TToolType)), new() { Services = services, SerializerOptions = serializerOptions })));
+                }
             }
         }
 
@@ -200,6 +212,9 @@ public static partial class McpServerBuilderExtensions
             select t,
             serializerOptions);
     }
+    #endregion
+
+    #region Keyed WithTools
     #endregion
 
     #region WithPrompts

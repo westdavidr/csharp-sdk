@@ -1,5 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Server;
@@ -36,6 +40,93 @@ public static class HttpMcpServerBuilderExtensions
         if (configureOptions is not null)
         {
             builder.Services.Configure(configureOptions);
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds the services necessary for a keyed MCP server instance that can be mapped with <see cref="M:McpEndpointRouteBuilderExtensions.MapMcp(IEndpointRouteBuilder, string, string)"/>
+    /// to handle MCP requests and sessions using the MCP Streamable HTTP transport.
+    /// </summary>
+    /// <param name="builder">The builder instance.</param>
+    /// <param name="serverKey">The unique key for this MCP server instance.</param>
+    /// <param name="configureOptions">Configures options for the Streamable HTTP transport. This allows configuring per-session
+    /// <see cref="McpServerOptions"/> and running logic before and after a session.</param>
+    /// <returns>The builder provided in <paramref name="builder"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="serverKey"/> is <see langword="null"/>.</exception>
+    public static IMcpServerBuilder WithHttpTransport(this IMcpServerBuilder builder, string serverKey, Action<HttpServerTransportOptions>? configureOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(serverKey);
+
+        // Ensure options services are registered for keyed scenarios
+        builder.Services.AddOptions();
+
+        // Register keyed options configuration using our wrapper
+        builder.Services.TryAddKeyedSingleton<IOptions<McpServerOptions>>(serverKey, (sp, key) =>
+        {
+            var optionsMonitor = sp.GetRequiredService<IOptionsMonitor<McpServerOptions>>();
+            return new KeyedOptionsWrapper<McpServerOptions>(optionsMonitor, (string)key, sp);
+        });
+
+        builder.Services.TryAddKeyedSingleton<IOptionsFactory<McpServerOptions>>(serverKey, (sp, key) =>
+        {
+            var optionsMonitor = sp.GetRequiredService<IOptionsMonitor<McpServerOptions>>();
+            return new KeyedOptionsWrapper<McpServerOptions>(optionsMonitor, (string)key, sp);
+        });
+
+        builder.Services.TryAddKeyedSingleton<IOptions<HttpServerTransportOptions>>(serverKey, (sp, key) =>
+        {
+            var optionsMonitor = sp.GetRequiredService<IOptionsMonitor<HttpServerTransportOptions>>();
+            return new KeyedOptionsWrapper<HttpServerTransportOptions>(optionsMonitor, (string)key, sp);
+        });
+
+        // Register keyed services for this specific server instance
+        builder.Services.TryAddKeyedSingleton<StatefulSessionManager>(serverKey, (sp, key) => 
+            new StatefulSessionManager(
+                sp.GetRequiredKeyedService<IOptions<HttpServerTransportOptions>>(key),
+                sp.GetRequiredService<ILogger<StatefulSessionManager>>()));
+
+        builder.Services.TryAddKeyedSingleton<StreamableHttpHandler>(serverKey, (sp, key) =>
+            new StreamableHttpHandler(
+                sp.GetRequiredKeyedService<IOptions<McpServerOptions>>(key),
+                sp.GetRequiredKeyedService<IOptionsFactory<McpServerOptions>>(key),
+                sp.GetRequiredKeyedService<IOptions<HttpServerTransportOptions>>(key),
+                sp.GetRequiredKeyedService<StatefulSessionManager>(key),
+                sp.GetRequiredService<IDataProtectionProvider>(),
+                sp.GetRequiredService<ILoggerFactory>(),
+                sp));
+
+        builder.Services.TryAddKeyedSingleton<SseHandler>(serverKey, (sp, key) =>
+            new SseHandler(
+                sp.GetRequiredKeyedService<IOptions<McpServerOptions>>(key),
+                sp.GetRequiredKeyedService<IOptionsFactory<McpServerOptions>>(key),
+                sp.GetRequiredKeyedService<IOptions<HttpServerTransportOptions>>(key),
+                sp.GetRequiredService<IHostApplicationLifetime>(),
+                sp.GetRequiredService<ILoggerFactory>()));
+
+        // Register a keyed background service for this server instance
+        builder.Services.TryAddKeyedSingleton<IdleTrackingBackgroundService>(serverKey, (sp, key) =>
+            new IdleTrackingBackgroundService(
+                sp.GetRequiredKeyedService<StatefulSessionManager>(key),
+                sp.GetRequiredKeyedService<IOptions<HttpServerTransportOptions>>(key),
+                sp.GetRequiredService<IHostApplicationLifetime>(),
+                sp.GetRequiredService<ILogger<IdleTrackingBackgroundService>>()));
+
+        // Register as hosted service so it gets started by the host
+        builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredKeyedService<IdleTrackingBackgroundService>(serverKey));
+
+        // Add data protection (shared across all instances)
+        builder.Services.AddDataProtection();
+
+        // Configure keyed options for this server instance
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Transient<IPostConfigureOptions<McpServerOptions>, AuthorizationFilterSetup>());
+        
+        if (configureOptions is not null)
+        {
+            builder.Services.Configure<HttpServerTransportOptions>(serverKey, configureOptions);
         }
 
         return builder;

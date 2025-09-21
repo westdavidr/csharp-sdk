@@ -4,9 +4,8 @@ namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>
 /// Default implementation of <see cref="IMcpServerBuilder"/> that enables fluent configuration
-/// of the Model Context Protocol (MCP) server. This builder is returned by the
-/// <see cref="McpServerServiceCollectionExtensions.AddMcpServer"/> extension method and
-/// provides access to the service collection for registering additional MCP components.
+/// of the Model Context Protocol (MCP) server. This builder is returned by an
+/// AddMcpServer extension method and provides access to the service collection for registering additional MCP components.
 /// </summary>
 internal sealed class DefaultMcpServerBuilder : IMcpServerBuilder
 {
