@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -65,21 +64,28 @@ public static class HttpMcpServerBuilderExtensions
         // Ensure options services are registered for keyed scenarios
         builder.Services.AddOptions();
 
-        // Register keyed options configuration using standard .NET options pattern
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureNamedOptions<McpServerOptions>>(sp =>
-            new KeyedMcpServerOptionsSetup(sp, serverKey, sp.GetRequiredService<IOptions<McpServerHandlers>>())));
+        // Register authorization filter setup for all options (only once globally)
+        // This should be done once for the application, not per server
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<McpServerOptions>, AuthorizationFilterSetup>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<McpServerOptions>, AuthorizationFilterSetup>());
 
-        // Register authorization filter setup for all options (it will apply to named options too)
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<McpServerOptions>>(sp =>
-            new AuthorizationFilterSetup(sp.GetService<IAuthorizationPolicyProvider>())));
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<McpServerOptions>>(sp =>
-            new AuthorizationFilterSetup(sp.GetService<IAuthorizationPolicyProvider>())));
+        // Register keyed options configuration using standard .NET options pattern
+        // We need to create a unique instance per server key to avoid duplicate registration issues
+        builder.Services.AddSingleton<IConfigureNamedOptions<McpServerOptions>>(sp =>
+            new KeyedMcpServerOptionsSetup(sp, serverKey, sp.GetRequiredService<IOptions<McpServerHandlers>>()));
 
         // Register keyed options monitor access
         builder.Services.TryAddKeyedSingleton(serverKey, (sp, key) =>
         {
             var optionsMonitor = sp.GetRequiredService<IOptionsMonitor<McpServerOptions>>();
             return Options.Options.Create(optionsMonitor.Get((string)key!));
+        });
+
+        // Register keyed options factory
+        builder.Services.TryAddKeyedSingleton<IOptionsFactory<McpServerOptions>>(serverKey, (sp, key) =>
+        {
+            var optionsMonitor = sp.GetRequiredService<IOptionsMonitor<McpServerOptions>>();
+            return new KeyedOptionsFactory<McpServerOptions>(optionsMonitor, (string)key!);
         });
 
         // For HttpServerTransportOptions, we can use standard named options

@@ -213,9 +213,6 @@ public static partial class McpServerBuilderExtensions
     }
     #endregion
 
-    #region Keyed WithTools
-    #endregion
-
     #region WithPrompts
     private const string WithPromptsRequiresUnreferencedCodeMessage =
         $"The non-generic {nameof(WithPrompts)} and {nameof(WithPromptsFromAssembly)} methods require dynamic lookup of method metadata" +
